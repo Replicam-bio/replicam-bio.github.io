@@ -145,6 +145,14 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
   var ORDER = ['index.html', 'products.html', 'technology.html', 'articles.html', 'contact.html'];
   var LAST = ORDER.length - 1;                   // the stack ends with Contact
   var busy = false;
+  // Which page switcher: 'stack' (the folder stack) or 'tiles' (the page's blocks fall away).
+  // Adding ?switcher=tiles or ?switcher=stack to any address overrides this, and is remembered in that browser.
+  var MODE = 'stack';
+  try {
+    var qm = /[?&]switcher=(stack|tiles)\b/.exec(location.search);
+    if (qm) localStorage.setItem('pt-switcher', qm[1]);
+    MODE = localStorage.getItem('pt-switcher') || MODE;
+  } catch (e) {}
 
   function pageIndex(url) {
     var name = (url.pathname.split('/').pop() || 'index.html').toLowerCase();
@@ -215,7 +223,8 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     return el;
   }
 
-  function leave(href) {
+  function leave(href, ev) {
+    if (MODE === 'tiles') { leaveTiles(href, ev); return; }
     if (busy) return; busy = true;
     var to = pageIndex(new URL(href, location.href)), from = pageIndex(location);
     if (to < 0) to = 0;
@@ -282,6 +291,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
   }
 
   function enter(info) {
+    if (info && info.mode === 'tiles') { enterTiles(); return; }
     var vh = window.innerHeight, to = info && typeof info.to === 'number' ? info.to : pageIndex(location);
     root.classList.add('pt-active');
     var back = layer('pt-backdrop');
@@ -315,12 +325,240 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     a.onfinish = function () { cleanup(); };
   }
 
+  /* ---------- Tiles switcher: the page's own blocks fall away, revealing the next page ----------
+     The visible blocks (nav pieces, headlines, paragraphs, cards, images, then the panels behind them) are
+     copied as layers that look exactly like the screen, the page itself is hidden, and the layers fall
+     (down going forward, up going back) in a cascade that spreads out from where you pressed. Behind them
+     the next page waits at 92% size, and grows into place once it has loaded. */
+  var LEAF = 'p,h1,h2,h3,h4,h5,h6,img,canvas,svg,video,iframe,button,a,figure,li,blockquote,table,label,input,select,textarea,' +
+    '.stat,.paper,.member,.panel-card,.contact-card,.panel-media,.feature-media,.filter,.chip,.btn,.team-bio';
+  var CARD = 0.92;                               // size of the waiting page
+
+  function transparentColor(c) { return !c || c === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(c); }
+  function paints(el) {                          // has its own background, border or a painted ::before/::after
+    var cs = getComputedStyle(el);
+    if (!transparentColor(cs.backgroundColor) || cs.backgroundImage !== 'none') return true;
+    if (parseFloat(cs.borderTopWidth) || parseFloat(cs.borderBottomWidth)) return true;
+    return ['::before', '::after'].some(function (p) {
+      var ps = getComputedStyle(el, p);
+      return ps.content !== 'none' && ps.display !== 'none' && (!transparentColor(ps.backgroundColor) || ps.backgroundImage !== 'none');
+    });
+  }
+  function hasText(el) {
+    for (var n = el.firstChild; n; n = n.nextSibling) if (n.nodeType === 3 && /\S/.test(n.nodeValue)) return true;
+    return false;
+  }
+  function onScreen(r, vw, vh) { return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < vw && r.top < vh; }
+  function clipRect(r, vw, vh, pad) {
+    var l = Math.max(-pad, r.left - pad), t = Math.max(-pad, r.top - pad);
+    return { left: l, top: t, right: Math.min(vw + pad, r.right + pad), bottom: Math.min(vh + pad, r.bottom + pad) };
+  }
+  function pathOf(el) {                          // child indices from <body>, to find the same element in a copy
+    var p = [];
+    for (; el && el !== body; el = el.parentElement) p.unshift(Array.prototype.indexOf.call(el.parentElement.children, el));
+    return p;
+  }
+  function follow(rootCopy, path) { var el = rootCopy; path.forEach(function (i) { el = el && el.children[i]; }); return el; }
+
+  // the blocks on screen, finest first: leaves (text, media, cards), then the panels (plates) they sit on
+  function collectBlocks(snap) {
+    var vw = window.innerWidth, vh = window.innerHeight, area = vw * vh, blocks = [], order = 0;
+    function add(el, kind, extra) {
+      var b = { el: el, kind: kind, order: order++, kids: [] };
+      for (var k in extra) b[k] = extra[k];
+      blocks.push(b); return b;
+    }
+    function walk(el, top, parent, minSplit) {
+      if (el.matches('script, style, .org-data, .nav-ghost') || el.hidden) return;
+      var cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) return;
+      var r = el.getBoundingClientRect();
+      if (el.matches('.org-gl')) {               // the living hero: a still copy of its current frame, cut to the slice
+        if (!snap) return;
+        var b0 = add(el, 'leaf', { back: true, rect: snap.rect, top: top }); if (parent) parent.kids.push(b0); return;
+      }
+      if (!onScreen(r, vw, vh)) return;
+      var kids = Array.prototype.filter.call(el.children, function (c) { return !c.matches('script, style'); });
+      var vis = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      var leaf = el.matches(LEAF) || hasText(el) || !kids.length || (vis < area * minSplit && !!top);
+      if (leaf) {
+        var b1 = add(el, 'leaf', { back: cs.position === 'absolute' && !!el.nextElementSibling, top: top || el });
+        if (parent) parent.kids.push(b1); return;
+      }
+      var plate = (!top || paints(el)) ? add(el, 'plate', { top: top || el, base: !top }) : null;
+      if (plate && parent) parent.kids.push(plate);
+      kids.forEach(function (c) { walk(c, top || el, plate || parent, minSplit); });
+    }
+    function run(minSplit) {
+      blocks = []; order = 0;
+      var main = body.querySelector('main');
+      if (nav) ['.nav-logo', '.nav-bar'].forEach(function (s) {
+        var el = nav.querySelector(s); if (!el) return;
+        var r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+        if (cs.visibility !== 'hidden' && cs.display !== 'none' && onScreen(r, vw, vh)) add(el, 'nav', { top: nav });
+      });
+      Array.prototype.forEach.call((main || body).children, function (c) { walk(c, null, null, minSplit); });
+      return blocks.length;
+    }
+    // keep the count reasonable: coarser blocks on busy screens
+    if (run(0.02) > 44 && run(0.07) > 44) run(0.2);
+    return blocks;
+  }
+
+  // one layer per block: a copy of the whole page, positioned exactly over it, showing only that block
+  function buildTiles(blocks, snap) {
+    var vw = window.innerWidth, vh = window.innerHeight, y = window.scrollY;
+    var bcs = getComputedStyle(body), pageBg = bcs.backgroundColor;
+    // the sections far off screen are skipped in the copies (no layout or paint for them)
+    var mainEl = body.querySelector('main'), mainPath = mainEl ? pathOf(mainEl) : null;
+    var offscreen = mainEl ? Array.prototype.map.call(mainEl.children, function (c) {
+      var r = c.getBoundingClientRect(); return r.bottom < -40 || r.top > vh + 40 ? r.height : -1;
+    }) : [];
+    return blocks.map(function (b) {
+      var page = document.createElement('div');
+      page.className = 'pt-page';
+      Object.assign(page.style, { top: -y + 'px', width: document.documentElement.clientWidth + 'px', visibility: 'hidden' });
+      Array.prototype.forEach.call(body.children, function (c) {
+        if (c.classList.contains('pt-layer')) return;
+        page.appendChild(c.cloneNode(true));
+      });
+      if (mainPath) {
+        var m = follow(page, mainPath);
+        offscreen.forEach(function (h, i) { if (h >= 0 && m.children[i]) { m.children[i].style.height = h + 'px'; m.children[i].style.contentVisibility = 'hidden'; } });
+      }
+      page.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
+      page.querySelectorAll('.org-data').forEach(function (n) { n.style.display = 'none'; });   // in the hero's snapshot (not removed: paths count siblings)
+      var self = follow(page, pathOf(b.el));
+      if (b.el.matches('.org-gl') && snap) {     // the hero's current frame, as a picture
+        var c = snap.canvas.cloneNode(); c.getContext('2d').drawImage(snap.canvas, 0, 0);
+        c.className = 'org-gl'; self.replaceWith(c); self = c;
+      }
+      self.style.visibility = 'visible';
+      if (b.kind === 'nav') {
+        var bg = follow(page, pathOf(nav.querySelector('.nav-bg') || nav));
+        if (b.el.matches('.nav-bar') && bg) bg.style.visibility = 'visible';
+      }
+      if (b.kind === 'plate') {                  // only the panel itself: what sits on it falls separately
+        blocks.forEach(function (o) { if (o !== b && b.el.contains(o.el)) { var t = follow(page, pathOf(o.el)); if (t) t.style.visibility = 'hidden'; } });
+        // a top-level section carries the page colour behind it (set on the section: the copy's root is hidden)
+        if (b.base && transparentColor(getComputedStyle(b.el).backgroundColor)) self.style.backgroundColor = pageBg;
+      }
+      var r = b.rect || b.el.getBoundingClientRect();
+      var cr = b.kind === 'plate' ? clipRect(r, vw, vh, 0) : clipRect(r, vw, vh, 6);
+      var radius = b.kind === 'plate' ? 0 : parseFloat(getComputedStyle(b.el).borderTopLeftRadius) || 0;
+      var tile = layer('pt-tile');
+      tile.appendChild(page);
+      tile.style.clipPath = 'inset(' + cr.top + 'px ' + (vw - cr.right) + 'px ' + (vh - cr.bottom) + 'px ' + cr.left + 'px round ' + radius + 'px)';
+      tile.style.transformOrigin = ((cr.left + cr.right) / 2) + 'px ' + ((cr.top + cr.bottom) / 2) + 'px';
+      tile.style.opacity = '0';
+      b.tile = tile; b.box = cr;
+      return tile;
+    });
+  }
+
+  function leaveTiles(href, ev) {
+    if (busy) return; busy = true;
+    var to = pageIndex(new URL(href, location.href)), from = pageIndex(location);
+    var dir = from >= 0 && to >= 0 && to < from ? -1 : 1;            // back in the menu order: the blocks fall upward
+    var vw = window.innerWidth, vh = window.innerHeight, phone = vw < 700;
+    // where the page breaks: the press, or the link's centre for the keyboard
+    var px = ev && ev.detail ? ev.clientX : vw / 2, py = ev && ev.detail ? ev.clientY : 0;
+    if (ev && !ev.detail && ev.target && ev.target.closest) {
+      var lr = ev.target.closest('a').getBoundingClientRect(); px = lr.left + lr.width / 2; py = lr.top + lr.height / 2;
+    }
+    var heroEl = document.querySelector('[data-organoid]');
+    var snap = heroEl && heroEl.ptSnapshot ? heroEl.ptSnapshot() : null;
+    root.classList.add('pt-active', 'pt-tiles');
+    layer('pt-backdrop');
+    var card = makeNext(href); card.style.visibility = ''; pending = null;
+    card.classList.add('pt-card'); card.style.zIndex = 2; card.style.transform = 'scale(' + CARD + ')';
+
+    var blocks = collectBlocks(snap);
+    buildTiles(blocks, snap);
+    blocks.forEach(function (b) { b.tile.style.zIndex = b.kind === 'nav' ? 9000 + b.order : 100 + b.order; });
+
+    // timing: leaves spread out from the press; media behind text next; each panel once all on it has gone
+    var diag = Math.sqrt(vw * vw + vh * vh), SPREAD = phone ? 240 : 300, STEP = phone ? 60 : 75;
+    function rnd() { return Math.random(); }
+    blocks.forEach(function (b) {
+      if (b.kind === 'plate' || b.back) return;
+      var bx = (b.box.left + b.box.right) / 2, by = (b.box.top + b.box.bottom) / 2;
+      b.delay = Math.sqrt((bx - px) * (bx - px) + (by - py) * (by - py)) / diag * SPREAD + rnd() * 40;
+    });
+    function latest(list) { return list.reduce(function (m, k) { return Math.max(m, k.delay || 0); }, 0); }
+    blocks.forEach(function (b) {                // media at the back of a section: after the text in front of it
+      if (!b.back) return;
+      var front = blocks.filter(function (o) { return o.top === b.top && o.kind === 'leaf' && !o.back; });
+      b.delay = (front.length ? latest(front) : 0) + STEP;
+    });
+    blocks.slice().reverse().forEach(function (b) {   // panels: after everything on them (inner panels first)
+      if (b.kind !== 'plate') return;
+      var on = blocks.filter(function (o) { return o !== b && b.el.contains(o.el) && o.delay !== undefined; });
+      b.delay = (on.length ? latest(on) : 0) + STEP;
+    });
+
+    function start() {
+      blocks.forEach(function (b) { b.tile.style.opacity = ''; });
+      body.style.visibility = 'hidden';
+      var runs = blocks.map(function (b) {
+        var h = b.box.bottom - b.box.top, w = b.box.right - b.box.left;
+        var dy = dir > 0 ? vh - b.box.top + h * 0.25 + 40 + rnd() * 60 : -(b.box.bottom + h * 0.25 + 40 + rnd() * 60);
+        var rot = (rnd() < 0.5 ? -1 : 1) * (1.5 + rnd() * 6) * Math.min(1, 420 / Math.max(w, h, 1));
+        var dx = (rnd() - 0.5) * (phone ? 30 : 60);
+        var dur = (560 + rnd() * 160) * (phone ? 0.85 : 1);
+        // a falling block passes in front of what still stands
+        setTimeout(function () { b.tile.style.zIndex = (b.kind === 'nav' ? 20000 : 10000) + b.order; }, b.delay);
+        var a = b.tile.animate([{ transform: 'none' }, { transform: 'translate(' + dx + 'px,' + dy + 'px) rotate(' + rot + 'deg)' }],
+          { duration: dur, delay: b.delay, easing: 'cubic-bezier(.5,0,.9,.45)', fill: 'forwards' });
+        return a.finished;
+      });
+      Promise.all(runs).then(function () {
+        try { sessionStorage.setItem('pt-enter', JSON.stringify({ to: to, mode: 'tiles' })); } catch (e) {}
+        window.location.href = href;
+        setTimeout(function () { try { sessionStorage.removeItem('pt-enter'); } catch (e) {} cleanup(); }, 5000);
+      }, function () {});
+    }
+    // copies show their pictures from the first frame: wait for the (cached) images to be decoded
+    var imgs = [];
+    blocks.forEach(function (b) { b.tile.querySelectorAll('img').forEach(function (i) { if (i.decode && i.closest('[style*="visible"]')) imgs.push(i.decode().catch(function () {})); }); });
+    var go = false;
+    function once() { if (go) return; go = true; requestAnimationFrame(start); }
+    Promise.all(imgs).then(once); setTimeout(once, 160);
+  }
+
+  function enterTiles() {
+    var vh = window.innerHeight;
+    root.classList.add('pt-active');
+    layer('pt-backdrop');
+    var target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (target) {
+      for (var top = 0, n = target; n && n !== body; n = n.offsetParent) top += n.offsetTop;
+      window.scrollTo({ top: top, behavior: 'instant' });
+    }
+    document.querySelectorAll('.reveal').forEach(function (el) {
+      var r = el.getBoundingClientRect();
+      el.style.transition = 'none';
+      if (r.top < vh * 1.1 && r.bottom > 0) el.classList.add('is-in');
+      requestAnimationFrame(function () { requestAnimationFrame(function () { el.style.transition = ''; }); });
+    });
+    pinNav();
+    var y = window.scrollY, rest = Math.max(0, body.scrollHeight - y - vh);
+    body.style.transformOrigin = '50% ' + (y + vh / 2) + 'px';
+    body.style.zIndex = 200;
+    root.classList.remove('pt-entering', 'pt-tiles');
+    var a = body.animate([
+      { transform: 'scale(' + CARD + ')', clipPath: 'inset(' + y + 'px 0 ' + rest + 'px 0 round 16px)' },
+      { transform: 'scale(1)', clipPath: 'inset(' + y + 'px 0 ' + rest + 'px 0 round 0px)' }
+    ], { duration: 560, easing: 'cubic-bezier(.65,0,.35,1)', fill: 'both' });
+    a.onfinish = function () { cleanup(); };
+  }
+
   function cleanup() {
     body.getAnimations().forEach(function (a) { a.cancel(); });
-    body.style.transformOrigin = ''; body.style.transform = ''; body.style.clipPath = ''; body.style.zIndex = '';
+    body.style.transformOrigin = ''; body.style.transform = ''; body.style.clipPath = ''; body.style.zIndex = ''; body.style.visibility = '';
     if (nav) { nav.style.position = ''; nav.style.top = ''; }
     document.querySelectorAll('.pt-layer').forEach(function (el) { el.remove(); });
-    root.classList.remove('pt-active', 'pt-entering');
+    root.classList.remove('pt-active', 'pt-entering', 'pt-tiles');
     busy = false; pending = null;
   }
 
@@ -347,7 +585,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     }
     var href = pageLink(e.target); if (!href) return;
     e.preventDefault();
-    leave(href);
+    leave(href, e);
   });
   // Preload the destination's preview when a link is hovered for a moment or focused: not on touch
   // (it would fire while scrolling) and not when the visitor asked to save data

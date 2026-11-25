@@ -298,8 +298,10 @@
   // The clock starts at the first frame that is drawn, and the motion (drift, sparkle, bursts, data layer)
   // eases in from zero: the first live frame is the still image exactly, so the swap can't be seen.
   var raf = null, visible = true, t0 = null;
+  var lastNow = 0;
   function draw(now) {
     if (!ready) return;
+    lastNow = now;
     if (t0 === null) { t0 = now; burst.next = now + 2600; focus.next = now + 1800; }
     var t = (now - t0) / 1000;
     var K = reduce ? 1 : Math.max(0, Math.min(1, (t - 0.35) / 1.6)); K = K * K * (3 - 2 * K);
@@ -314,6 +316,18 @@
     var s = 1 + 0.011 * Math.sin(t * 6.28318 / 7.5);
     if (dt) drawData(now, t, s, B, insight * K);
   }
+  // for the tiles page switcher: the current frame (re-drawn and copied in the same moment, as WebGL
+  // keeps no picture afterwards) and where the slice sits on screen
+  hero.ptSnapshot = function () {
+    if (!ready || !shown || gl.isContextLost()) return null;
+    draw(lastNow);
+    var c = document.createElement('canvas'); c.width = glc.width; c.height = glc.height;
+    var x = c.getContext('2d'); x.drawImage(glc, 0, 0); if (dtc && dtc.isConnected) x.drawImage(dtc, 0, 0);
+    var hr = hero.getBoundingClientRect();
+    var l = Math.max(hr.left, hr.left + rect.x - 40), t = Math.max(hr.top, hr.top + rect.y - 40);
+    return { canvas: c, rect: { left: l, top: t, right: Math.min(hr.right, hr.left + rect.x + rect.w + 40), bottom: Math.min(hr.bottom, hr.top + rect.y + rect.h + 40),
+      width: 0, height: 0 } };
+  };
   // while a page switch is running the hero holds its frame (leaving) or its still (arriving), so the
   // transition never competes with the canvas for frames
   function loop(now) { if (!root.classList.contains('pt-active') && !root.classList.contains('pt-entering')) draw(now); raf = visible ? requestAnimationFrame(loop) : null; }
