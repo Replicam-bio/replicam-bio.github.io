@@ -24,9 +24,9 @@
 
   // ---------- still placeholder: the same image, placed, dimmed and feathered like the shader's first frame,
   // shown instantly so the hero never blanks while WebGL loads (e.g. when a page switch hands over) ----------
-  var shown = false, lost = false;
+  var shown = false;                       // true while the live canvas is what the visitor sees
   function placeStill() {
-    if (!fallback || (shown && !lost)) return;
+    if (!fallback || shown) return;
     var st = fallback.style;
     st.left = rect.x + 'px'; st.top = rect.y + 'px'; st.width = rect.w + 'px'; st.height = rect.h + 'px';
     st.right = 'auto'; st.bottom = 'auto'; st.objectFit = 'fill'; st.opacity = '0.72';
@@ -42,7 +42,7 @@
   function reveal() {                      // first WebGL frame is on the canvas: swap the still for the live hero
     if (shown) return; shown = true;
     hero.classList.add('is-ready');
-    setTimeout(function () { if (fallback && glc.isConnected && !lost) fallback.hidden = true; }, 320);
+    setTimeout(function () { if (fallback && shown) fallback.hidden = true; }, 320);
   }
 
   // ---------- layout: where the slice sits on screen ----------
@@ -62,12 +62,15 @@
   // ---------- WebGL tissue ----------
   var gl = glc.getContext('webgl', { antialias: false, premultipliedAlpha: false, alpha: false });
   var dt = dtc ? dtc.getContext('2d') : null;
-  function giveUp() { shown = true; glc.remove(); if (dtc) dtc.remove(); if (fallback) fallback.hidden = false; }
+  // keep (or bring back) the still image whenever the live canvas can't be trusted
+  function showStill() { shown = false; ready = false; hero.classList.remove('is-ready'); if (fallback) fallback.hidden = false; placeStill(); }
+  function giveUp() { showStill(); glc.remove(); if (dtc) dtc.remove(); }
+  layout();
+  var rt; window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(function () { layout(); if (reduce) draw(performance.now()); }, 120); });
   if (!gl) { giveUp(); return; }
   // the browser can drop the WebGL context (common on phones after backgrounding): fall back to the still image
   glc.addEventListener('webglcontextlost', function (e) {
-    e.preventDefault(); lost = true; ready = false;
-    hero.classList.remove('is-ready'); placeStill();
+    e.preventDefault(); showStill();
     if (dt) dt.clearRect(0, 0, W, H);
   });
 
@@ -120,19 +123,43 @@
   var loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   var U = {}; ['T', 'R', 'Q', 't', 'A', 'B', 'O', 'dpr'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
 
-  var ready = false;
-  var img = new Image();
-  img.onload = function () {
-    if (img.naturalWidth) { IMG_ASPECT = img.naturalWidth / img.naturalHeight; layout(); }
-    var tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
-    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img); }
-    catch (err) { giveUp(); return; }
+  var ready = false, tex = null, checks = 0;
+  // upload the picture; WebGL reports a refused image as an error instead of throwing (Safari: "bad image data")
+  function upload(src) {
+    if (!src) return false;
+    if (!tex) tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    while (gl.getError()) {}
+    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, src); } catch (err) { return false; }
+    if (gl.getError()) return false;
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.uniform1i(U.T, 0); ready = true;
-    if (reduce) draw(performance.now());
+    gl.uniform1i(U.T, 0); return true;
+  }
+  function viaCanvas() {                   // second route: draw the image to a 2D canvas and upload that
+    try { var c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext('2d').drawImage(img, 0, 0); return c; }
+    catch (err) { return null; }
+  }
+  // is the slice really on the canvas? (reads a small block at its centre, right after drawing)
+  function pictureDrawn() {
+    if (gl.isContextLost()) return false;
+    var n = 48, px = new Uint8Array(n * n * 4);
+    var x = Math.round((rect.x + rect.w * .4) * DPR - n / 2), y = Math.round(glc.height - (rect.y + rect.h * .4) * DPR - n / 2);
+    gl.readPixels(Math.max(0, Math.min(glc.width - n, x)), Math.max(0, Math.min(glc.height - n, y)), n, n, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    for (var i = 0; i < px.length; i += 4) if (px[i] > 56 || px[i + 1] > 56 || px[i + 2] > 56) return true;   // brighter than the ground
+    return false;
+  }
+  var img = new Image();
+  img.onload = function () {
+    if (img.naturalWidth) { IMG_ASPECT = img.naturalWidth / img.naturalHeight; layout(); }
+    function go() {
+      if (!upload(img) && !upload(viaCanvas())) { giveUp(); return; }
+      ready = true;
+      if (reduce) draw(performance.now());
+    }
+    if (img.decode) img.decode().then(go, go); else go();   // fully decoded before WebGL reads it
   };
   // Opened from a folder (file://), browsers won't hand an image file to WebGL: load the bundled copy
   // (a large script, so only then, and after the still placeholder has painted)
@@ -265,14 +292,13 @@
     gl.uniform4f(U.Q, rect.x, rect.y, rect.w, rect.h);
     gl.uniform1f(U.t, t); gl.uniform1f(U.A, alive); gl.uniform1f(U.B, B); gl.uniform2f(U.O, burst.o[0], burst.o[1]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    if (!shown) reveal();
+    // only swap the still for the canvas once the picture is verifiably there; otherwise keep the still
+    if (!shown) { if (pictureDrawn()) reveal(); else if (++checks > 90) { giveUp(); return; } }
     var s = 1 + 0.011 * Math.sin(t * 6.28318 / 7.5);
     if (dt) drawData(now, t, s, B, insight);
   }
   function loop(now) { draw(now); raf = visible ? requestAnimationFrame(loop) : null; }
 
-  layout();
-  var rt; window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(function () { layout(); if (reduce) draw(performance.now()); }, 120); });
   if (!reduce) {
     raf = requestAnimationFrame(loop);
     new IntersectionObserver(function (en) { visible = en[0].isIntersecting; if (visible && !raf) raf = requestAnimationFrame(loop); }).observe(hero);
