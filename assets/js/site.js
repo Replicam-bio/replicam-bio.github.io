@@ -335,27 +335,35 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
 
   function buildGrid(snap) {
     var vw = window.innerWidth, vh = window.innerHeight, y = window.scrollY, phone = vw < 700;
-    var cols = phone ? 3 : 6, rows = phone ? 5 : 4;
-    var pageBg = getComputedStyle(body).backgroundColor;
+    var cols = phone ? 6 : 12, rows = phone ? 10 : 8;
+    var pageBg = getComputedStyle(body).backgroundColor, pageW = document.documentElement.clientWidth;
     // whole-pixel cell edges, so neighbouring tiles meet without a seam
     var xs = [], ys = [], i, j;
     for (i = 0; i <= cols; i++) xs.push(Math.round(vw * i / cols));
     for (j = 0; j <= rows; j++) ys.push(Math.round(vh * j / rows));
-    // sections far off screen are skipped in the copies (no layout or paint for them)
+    // each copy only lays out and paints the sections its row actually shows
     var mainEl = body.querySelector('main');
-    var offscreen = mainEl ? Array.prototype.map.call(mainEl.children, function (c) {
-      var r = c.getBoundingClientRect(); return r.bottom < -40 || r.top > vh + 40 ? r.height : -1;
-    }) : [];
+    var sections = mainEl ? Array.prototype.map.call(mainEl.children, function (c) { var r = c.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: r.height }; }) : [];
+    // the header is fixed to the screen: in a copy it is pinned where it is on screen now
+    var navTop = nav ? nav.getBoundingClientRect().top + y : 0;
     var heroEl = snap && document.querySelector('[data-organoid]'), hr = heroEl && heroEl.getBoundingClientRect();
     var cells = [];
     for (j = 0; j < rows; j++) for (i = 0; i < cols; i++) {
       var cell = { left: xs[i], right: xs[i + 1], top: ys[j], bottom: ys[j + 1] };
+      var cw = cell.right - cell.left, ch = cell.bottom - cell.top;
       var page = document.createElement('div');
       page.className = 'pt-page';
-      Object.assign(page.style, { top: -y + 'px', width: document.documentElement.clientWidth + 'px', background: pageBg });
+      Object.assign(page.style, { left: -cell.left + 'px', top: -(y + cell.top) + 'px', width: pageW + 'px', background: pageBg });
       Array.prototype.forEach.call(body.children, function (c) { if (!c.classList.contains('pt-layer')) page.appendChild(c.cloneNode(true)); });
       var m = page.querySelector('main');
-      if (m) offscreen.forEach(function (h, k) { if (h >= 0 && m.children[k]) { m.children[k].style.height = h + 'px'; m.children[k].style.contentVisibility = 'hidden'; } });
+      if (m) sections.forEach(function (s, n) {
+        if ((s.bottom < cell.top - 2 || s.top > cell.bottom + 2) && m.children[n]) { m.children[n].style.height = s.h + 'px'; m.children[n].style.contentVisibility = 'hidden'; }
+      });
+      var nv = page.querySelector('.nav');
+      if (nv) Object.assign(nv.style, { position: 'absolute', top: navTop + 'px' });
+      // nothing in a copy needs to run or stay hidden: drop scripts and hidden content (less to copy and lay out)
+      page.querySelectorAll('script, [hidden], .team-bios').forEach(function (n) { n.remove(); });
+      page.querySelectorAll('img').forEach(function (n) { n.decoding = 'sync'; n.loading = 'eager'; });
       page.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
       page.querySelectorAll('.org-data').forEach(function (n) { n.style.display = 'none'; });   // already in the hero's snapshot
       // the living hero: only this cell's piece of its current frame
@@ -371,15 +379,16 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
           gl.replaceWith(c);
         } else gl.style.display = 'none';
       }
+      // a tile is only as big as its cell (small layers), with the copy shifted so its piece shows
       var tile = layer('pt-tile');
+      Object.assign(tile.style, { left: cell.left + 'px', top: cell.top + 'px', width: cw + 'px', height: ch + 'px', overflow: 'hidden',
+        transformOrigin: '50% 50%', opacity: '0', zIndex: 100 });
       tile.appendChild(page);
-      tile.style.clipPath = 'inset(' + cell.top + 'px ' + (vw - cell.right) + 'px ' + (vh - cell.bottom) + 'px ' + cell.left + 'px)';
-      tile.style.transformOrigin = ((cell.left + cell.right) / 2) + 'px ' + ((cell.top + cell.bottom) / 2) + 'px';
-      tile.style.opacity = '0'; tile.style.zIndex = 100;
       cells.push({ tile: tile, box: cell });
     }
     return cells;
   }
+
 
   function leaveTiles(href, ev) {
     if (busy) return; busy = true;
@@ -426,7 +435,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
         // the gleam: a tinted band of light that sweeps outward across the tile, brightest as it turns most
         var g = document.createElement('span');
         g.className = 'pt-gleam ' + (s < 0 ? 'is-blush' : 'is-cryo');
-        Object.assign(g.style, { left: c.box.left + 'px', top: c.box.top + 'px', width: w + 'px', height: h + 'px' });
+        Object.assign(g.style, { left: 0, top: 0, width: w + 'px', height: h + 'px' });
         c.tile.appendChild(g);
         g.animate([
           { transform: 'translateX(' + (-s * w * 1.1) + 'px)', opacity: 0 },
