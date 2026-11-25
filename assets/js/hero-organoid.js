@@ -42,7 +42,7 @@
   function reveal() {                      // first WebGL frame is on the canvas: swap the still for the live hero
     if (shown) return; shown = true;
     hero.classList.add('is-ready');
-    setTimeout(function () { if (fallback && shown) fallback.hidden = true; }, 320);
+    setTimeout(function () { if (fallback && shown) fallback.hidden = true; }, 620);
   }
 
   // ---------- layout: where the slice sits on screen ----------
@@ -52,11 +52,12 @@
     var h, w, x, y;
     if (W >= 900) { h = H * 0.9; w = h * IMG_ASPECT; x = Math.max(W * 0.44, W - w * 0.88); y = H * 0.07; }  // right side, on black
     else { w = W * 1.15; h = w / IMG_ASPECT; x = W * 0.08; y = H * 0.09; }                                  // phone: top
-    rect = { x: x, y: y, w: w, h: h };
+    rect = { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };   // whole pixels: the still and the canvas then land on the same pixel grid
     placeStill();
     [glc, dtc].forEach(function (c) { if (c) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); } });
     if (dt) dt.setTransform(DPR, 0, 0, DPR, 0, 0);
     if (gl) gl.viewport(0, 0, glc.width, glc.height);
+    if (ready && Math.round(rect.w * DPR) !== texW) uploadFitted();   // window resized: refit the texture
   }
 
   // ---------- WebGL tissue ----------
@@ -79,7 +80,7 @@
   var VS = 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
   var FS = [
     'precision highp float;',
-    'uniform sampler2D T;uniform vec2 R;uniform vec4 Q;uniform float t,A,B,dpr;uniform vec2 O;',
+    'uniform sampler2D T;uniform vec2 R;uniform vec4 Q;uniform float t,A,B,K,dpr;uniform vec2 O;',
     'const vec3 INK=vec3(31.,31.,31.)/255.;const vec3 CRYO=vec3(142.,238.,255.)/255.;',
     'float h1(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}',
     'float n2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);',
@@ -91,14 +92,14 @@
     ' vec2 uv=(px-Q.xy)/Q.zw; uv=(uv-.5)/(1.+.011*br)+.5;',
     ' vec2 w=vec2(n2(uv*4.5+vec2(t*.05,0.)),n2(uv*4.5+vec2(5.2,t*.045)))-.5;',   // slow tissue drift
     ' vec2 w2=vec2(n2(uv*22.+vec2(t*.18,1.7)),n2(uv*22.+vec2(8.3,t*.16)))-.5;',  // cytoplasmic shimmer
-    ' uv+=w*.0045+w2*.0011;',
+    ' uv+=(w*.0045+w2*.0011)*K;',                                        // K: motion eases in from the still
     ' if(uv.x<0.||uv.y<0.||uv.x>1.||uv.y>1.){gl_FragColor=vec4(INK,1.);return;}',
     ' vec3 c=texture2D(T,uv).rgb; float d=clamp((L(c)-.16)/.55,0.,1.);',
     ' c=mix(INK,c,.72+.07*br);',
     // network burst: a soft wavefront travelling across the slice
     ' float band=0.; if(B<1.){vec2 q=(uv-O)*vec2(1.111,1.);float r=B*.95;',
     '  band=exp(-pow((length(q)-r)/.075,2.))*(1.-B);band+=.18*smoothstep(r,r-.35,length(q))*(1.-B)*(1.-B);}',
-    ' c+=band*d*vec3(.5,.38,.43)*A;',
+    ' c+=band*d*vec3(.5,.38,.43)*A*K;',
     // sparse cells firing (calcium-imaging style flicker)
     ' vec2 g=uv*vec2(118.,106.);vec2 id=floor(g);float h=h1(id),h2=h1(id+17.3);',
     ' vec2 j=vec2(h1(id+3.1),h1(id+9.7))*.5+.25;vec2 f=fract(g)-j;',
@@ -106,7 +107,7 @@
     ' spike=max(spike,band*step(.7,h2)*1.1);',
     ' float dc=clamp((L(texture2D(T,(id+j)/vec2(118.,106.)).rgb)-.2)/.5,0.,1.);',
     ' float spot=(exp(-dot(f,f)*24.)+.25*exp(-dot(f,f)*11.))*spike*dc;',
-    ' c+=spot*mix(CRYO,vec3(1.),h1(id+5.)*.5)*1.6*A;',
+    ' c+=spot*mix(CRYO,vec3(1.),h1(id+5.)*.5)*1.6*A*K;',
     // feather the outer border into the ground
     ' float e=smoothstep(0.,.035,uv.x)*smoothstep(0.,.035,uv.y)*(1.-smoothstep(.78,1.,uv.x))*(1.-smoothstep(.72,1.,uv.y));',
     ' e*=1.-smoothstep(.55,1.15,length((uv-vec2(.38,.4))*vec2(1.,1.1)));',
@@ -123,7 +124,7 @@
   var buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   var loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  var U = {}; ['T', 'R', 'Q', 't', 'A', 'B', 'O', 'dpr'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+  var U = {}; ['T', 'R', 'Q', 't', 'A', 'B', 'K', 'O', 'dpr'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
 
   var ready = false, tex = null, checks = 0;
   // upload the picture; WebGL reports a refused image as an error instead of throwing (Safari: "bad image data")
@@ -140,9 +141,19 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.uniform1i(U.T, 0); return true;
   }
-  function viaCanvas() {                   // second route: draw the image to a 2D canvas and upload that
-    try { var c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext('2d').drawImage(img, 0, 0); return c; }
-    catch (err) { return null; }
+  function viaCanvas(w, h) {               // the image drawn to a 2D canvas (also the second route if the image itself is refused)
+    try {
+      var c = document.createElement('canvas'), x; c.width = w || img.naturalWidth; c.height = h || img.naturalHeight;
+      x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(img, 0, 0, c.width, c.height); return c;
+    } catch (err) { return null; }
+  }
+  // Give WebGL the picture already scaled to its on-screen size, the way the browser scales the still image:
+  // sampled 1:1 the live frame has the same sharpness as the still (a larger texture would look grainier)
+  var texW = 0;
+  function uploadFitted() {
+    var w = Math.round(rect.w * DPR), h = Math.round(rect.h * DPR);
+    var okk = (w < img.naturalWidth && upload(viaCanvas(w, h))) || upload(img) || upload(viaCanvas());
+    texW = w; return okk;
   }
   // is the slice really on the canvas? (reads a small block at its centre, right after drawing)
   function pictureDrawn() {
@@ -157,7 +168,7 @@
   img.onload = function () {
     if (img.naturalWidth) { IMG_ASPECT = img.naturalWidth / img.naturalHeight; layout(); }
     function go() {
-      if (!upload(img) && !upload(viaCanvas())) { giveUp(); return; }
+      if (!uploadFitted()) { giveUp(); return; }
       ready = true;
       if (reduce) draw(performance.now());
     }
@@ -284,20 +295,24 @@
   }
 
   // ---------- loop ----------
-  var raf = null, visible = true, t0 = performance.now();
+  // The clock starts at the first frame that is drawn, and the motion (drift, sparkle, bursts, data layer)
+  // eases in from zero: the first live frame is the still image exactly, so the swap can't be seen.
+  var raf = null, visible = true, t0 = null;
   function draw(now) {
     if (!ready) return;
+    if (t0 === null) { t0 = now; burst.next = now + 2600; focus.next = now + 1800; }
     var t = (now - t0) / 1000;
+    var K = reduce ? 1 : Math.max(0, Math.min(1, (t - 0.35) / 1.6)); K = K * K * (3 - 2 * K);
     if (burst.next < now && alive > 0.05) scheduleBurst(now);
     var B = burst.start < 0 ? 2 : (now - burst.start) / 3200;
     gl.uniform2f(U.R, glc.width, glc.height); gl.uniform1f(U.dpr, DPR);
     gl.uniform4f(U.Q, rect.x, rect.y, rect.w, rect.h);
-    gl.uniform1f(U.t, t); gl.uniform1f(U.A, alive); gl.uniform1f(U.B, B); gl.uniform2f(U.O, burst.o[0], burst.o[1]);
+    gl.uniform1f(U.t, t); gl.uniform1f(U.A, alive); gl.uniform1f(U.B, B); gl.uniform1f(U.K, K); gl.uniform2f(U.O, burst.o[0], burst.o[1]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     // only swap the still for the canvas once the picture is verifiably there; otherwise keep the still
     if (!shown) { if (pictureDrawn()) reveal(); else if (++checks > 90) { giveUp(); return; } }
     var s = 1 + 0.011 * Math.sin(t * 6.28318 / 7.5);
-    if (dt) drawData(now, t, s, B, insight);
+    if (dt) drawData(now, t, s, B, insight * K);
   }
   // while a page switch is running the hero holds its frame (leaving) or its still (arriving), so the
   // transition never competes with the canvas for frames
