@@ -24,9 +24,9 @@
 
   // ---------- still placeholder: the same image, placed, dimmed and feathered like the shader's first frame,
   // shown instantly so the hero never blanks while WebGL loads (e.g. when a page switch hands over) ----------
-  var shown = false;
+  var shown = false, lost = false;
   function placeStill() {
-    if (!fallback || shown) return;
+    if (!fallback || (shown && !lost)) return;
     var st = fallback.style;
     st.left = rect.x + 'px'; st.top = rect.y + 'px'; st.width = rect.w + 'px'; st.height = rect.h + 'px';
     st.right = 'auto'; st.bottom = 'auto'; st.objectFit = 'fill'; st.opacity = '0.72';
@@ -42,7 +42,7 @@
   function reveal() {                      // first WebGL frame is on the canvas: swap the still for the live hero
     if (shown) return; shown = true;
     hero.classList.add('is-ready');
-    setTimeout(function () { if (fallback && glc.isConnected) fallback.hidden = true; }, 320);
+    setTimeout(function () { if (fallback && glc.isConnected && !lost) fallback.hidden = true; }, 320);
   }
 
   // ---------- layout: where the slice sits on screen ----------
@@ -64,6 +64,12 @@
   var dt = dtc ? dtc.getContext('2d') : null;
   function giveUp() { shown = true; glc.remove(); if (dtc) dtc.remove(); if (fallback) fallback.hidden = false; }
   if (!gl) { giveUp(); return; }
+  // the browser can drop the WebGL context (common on phones after backgrounding): fall back to the still image
+  glc.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault(); lost = true; ready = false;
+    hero.classList.remove('is-ready'); placeStill();
+    if (dt) dt.clearRect(0, 0, W, H);
+  });
 
   var VS = 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}';
   var FS = [
@@ -128,7 +134,6 @@
     gl.uniform1i(U.T, 0); ready = true;
     if (reduce) draw(performance.now());
   };
-  // Opened from a folder (file://) the browser won't hand an image file to WebGL; use the bundled copy
   // Opened from a folder (file://), browsers won't hand an image file to WebGL: load the bundled copy
   // (a large script, so only then, and after the still placeholder has painted)
   var key = hero.getAttribute('data-organoid-var') || 'ORGANOID_SLICE';

@@ -1,0 +1,3 @@
+# bundled images, only needed when the pages are opened straight from a folder (file://)
+assets/js/*.data.js
+.DS_Store

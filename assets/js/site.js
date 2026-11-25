@@ -250,6 +250,8 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
           setTimeout(function () {
             try { sessionStorage.setItem('pt-enter', JSON.stringify({ to: to })); } catch (e) {}
             window.location.href = href;
+            // if the navigation never happens (offline, stopped), put the page back instead of leaving it in the stack
+            setTimeout(function () { try { sessionStorage.removeItem('pt-enter'); } catch (e) {} cleanup(); }, 5000);
           }, 60);
           return;
         }
@@ -296,6 +298,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
   }
 
   // Internal page links get the transition
+  function samePath(p) { return p.replace(/\/index\.html?$/i, '/'); }
   function pageLink(target) {
     var a = target && target.closest && target.closest('a[href]');
     if (!a || (a.target && a.target !== '_self')) return null;
@@ -303,28 +306,43 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     if (!raw || raw.charAt(0) === '#' || /^(mailto:|tel:|javascript:)/i.test(raw)) return null;
     var url = new URL(a.href, location.href);
     if (location.protocol === 'file:' ? url.protocol !== 'file:' : url.origin !== location.origin) return null;
-    if (url.pathname === location.pathname) return null;        // same page, let anchors scroll
+    if (samePath(url.pathname) === samePath(location.pathname)) return null;   // same page ("/" and "/index.html" are one page), let anchors scroll
     if (!/\.html?$|\/$/.test(url.pathname)) return null;
     return url.href;
   }
   document.addEventListener('click', function (e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    // a link to the page we are already on (no anchor): go to the top instead of reloading
+    var same = e.target.closest && e.target.closest('a[href]');
+    if (same && !same.hash && same.getAttribute('href').charAt(0) !== '#' && (!same.target || same.target === '_self') &&
+        same.protocol === location.protocol && same.host === location.host && samePath(same.pathname) === samePath(location.pathname)) {
+      e.preventDefault(); window.scrollTo({ top: 0 }); return;
+    }
     var href = pageLink(e.target); if (!href) return;
     e.preventDefault();
     leave(href);
   });
-  ['pointerover', 'focusin', 'touchstart'].forEach(function (type) {
-    document.addEventListener(type, function (e) {
+  // Preload the destination's preview when a link is hovered for a moment or focused: not on touch
+  // (it would fire while scrolling) and not when the visitor asked to save data
+  var saveData = navigator.connection && navigator.connection.saveData, hoverT = 0;
+  if (!saveData) {
+    document.addEventListener('pointerover', function (e) {
+      clearTimeout(hoverT);
+      if (busy || e.pointerType === 'touch') return;
+      var href = pageLink(e.target);
+      if (href) hoverT = setTimeout(function () { if (!busy) makeNext(href); }, 120);
+    }, { passive: true });
+    document.addEventListener('focusin', function (e) {
       if (busy) return;
       var href = pageLink(e.target); if (href) makeNext(href);
-    }, { passive: true });
-  });
+    });
+  }
 
   // Coming back via the back button restores a frozen page: reset it
   window.addEventListener('pageshow', function (e) { if (e.persisted) cleanup(); });
 
   var info = null;
-  try { var raw = sessionStorage.getItem('pt-enter'); sessionStorage.removeItem('pt-enter'); if (raw) info = raw === '1' ? {} : JSON.parse(raw); } catch (e) {}
+  try { var raw = sessionStorage.getItem('pt-enter'); sessionStorage.removeItem('pt-enter'); if (raw) info = JSON.parse(raw); } catch (e) {}
   if (info) enter(info); else root.classList.remove('pt-entering');
 })();
 

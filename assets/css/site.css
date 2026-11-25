@@ -3,8 +3,6 @@
    Event Horizon #1F1F1F · Singularity White #FFFFFF · Quark Blush #FD92A3 · CryoGlow #8EEEFF
    Typeface: Manrope (Title 110% / -1%, Subtitle 120% / -1%, Body 150% / 0%) */
 
-@import url("../fonts/manrope.css");
-
 :root {
   --ink: #1F1F1F;          /* Event Horizon */
   --white: #FFFFFF;        /* Singularity White */
@@ -82,7 +80,6 @@ h1, h2, h3, p { margin: 0; }
   position: relative; isolation: isolate;
   max-width: var(--max); margin: 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  transition: max-width .45s cubic-bezier(.2,.7,.2,1);
 }
 .nav-inner > * { pointer-events: auto; }
 .nav-logo img { height: 32px; width: auto; }
@@ -233,8 +230,9 @@ h1, h2, h3, p { margin: 0; }
 .footer a:hover { color: var(--white); }
 
 /* ---------- Reveal on scroll ---------- */
-.reveal { opacity: 0; transform: translateY(24px); transition: opacity .8s ease, transform .8s cubic-bezier(.2,.7,.2,1); }
-.reveal.is-in { opacity: 1; transform: none; }
+/* hidden only when scripts run (html.js is set in the head and cleared if site.js fails to load) */
+.js .reveal { opacity: 0; transform: translateY(24px); transition: opacity .8s ease, transform .8s cubic-bezier(.2,.7,.2,1); }
+.js .reveal.is-in { opacity: 1; transform: none; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
@@ -258,7 +256,7 @@ h1, h2, h3, p { margin: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-  .reveal { opacity: 1; transform: none; }
+  .js .reveal { opacity: 1; transform: none; }
 }
 
 /* Inner-page heroes: smaller display so it never runs under the nav */
@@ -369,7 +367,7 @@ button.member { cursor: pointer; }
 .member-initials { font-size: clamp(40px, 4.4vw, 64px); font-weight: 500; letter-spacing: -0.03em; color: #9A9A9A; }
 .member-name { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
 .member-role { font-size: 14px; color: var(--grey-3); }
-/* "+" badge on people with a longer bio; turns into × when open */
+/* "+" badge on people with a longer bio */
 .member-more { position: absolute; right: 12px; bottom: 12px; width: 32px; height: 32px; border-radius: 4px; background: var(--ink); transition: background .2s ease, opacity .3s ease, transform .3s ease; }
 .member-more::before, .member-more::after { content: ""; position: absolute; left: 50%; top: 50%; width: 12px; height: 2px; margin: -1px 0 0 -6px; background: var(--white); }
 .member-more::after { transform: rotate(90deg); }
