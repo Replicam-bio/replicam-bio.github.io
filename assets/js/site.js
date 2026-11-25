@@ -290,14 +290,20 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
       var s = slot(i - to, vh), el = sheet(i);
       el.style.transform = 'translateY(' + s.ty + 'px) scale(' + s.s + ')'; el.style.zIndex = 100 - (i - to) * 10;
     }
-    root.classList.remove('pt-entering');
-    // land exactly where the preview card was showing (anchor target, sections already revealed)
+    // land exactly where the preview card was showing (anchor target, sections already revealed).
+    // html.pt-entering keeps every section revealed from the very first paint; the ones on screen are
+    // fixed as revealed before that class goes, so nothing blinks during the hand-over
     var target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
-    if (target) window.scrollTo({ top: target.getBoundingClientRect().top + window.scrollY, behavior: 'instant' });
+    if (target) {                                  // measured from offsets: the page is still transformed here
+      for (var top = 0, n = target; n && n !== body; n = n.offsetParent) top += n.offsetTop;
+      window.scrollTo({ top: top, behavior: 'instant' });
+    }
     document.querySelectorAll('.reveal').forEach(function (el) {
       var r = el.getBoundingClientRect();
-      if (r.top < vh && r.bottom > 0) { el.style.transition = 'none'; el.classList.add('is-in'); requestAnimationFrame(function () { requestAnimationFrame(function () { el.style.transition = ''; }); }); }
+      if (r.top < vh * 1.1 && r.bottom > 0) { el.style.transition = 'none'; el.classList.add('is-in'); requestAnimationFrame(function () { requestAnimationFrame(function () { el.style.transition = ''; }); }); }
+      else { el.style.transition = 'none'; requestAnimationFrame(function () { requestAnimationFrame(function () { el.style.transition = ''; }); }); }
     });
+    root.classList.remove('pt-entering');
     pinNav();
     var y = window.scrollY, rest = Math.max(0, body.scrollHeight - y - vh);
     body.style.transformOrigin = '50% ' + y + 'px';
@@ -353,9 +359,11 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
       var href = pageLink(e.target);
       if (href) hoverT = setTimeout(function () { if (!busy) makeNext(href); }, 120);
     }, { passive: true });
-    document.addEventListener('focusin', function (e) {
-      if (busy) return;
-      var href = pageLink(e.target); if (href) makeNext(href);
+    ['focusin', 'pointerdown'].forEach(function (type) {      // pressing starts the preview at once, ahead of the click
+      document.addEventListener(type, function (e) {
+        if (busy || e.pointerType === 'touch') return;      // a touch may be the start of a scroll
+        var href = pageLink(e.target); if (href) makeNext(href);
+      }, { passive: true });
     });
   }
 

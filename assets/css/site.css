@@ -284,7 +284,7 @@ html.pt-entering body { transform: translateY(13vh) scale(.88); transform-origin
 /* Page shown inside the transition sheet: no scrollbar, content already revealed */
 html.pt-preview { scrollbar-width: none; }
 html.pt-preview::-webkit-scrollbar { display: none; }
-html.pt-preview .reveal { opacity: 1; transform: none; transition: none; }
+html.pt-preview .reveal, html.pt-entering .reveal { opacity: 1; transform: none; transition: none; }
 
 /* ---------- Living organoid hero (home) ---------- */
 .org-hero { background: var(--ink); }

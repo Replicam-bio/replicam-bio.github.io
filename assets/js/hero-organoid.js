@@ -60,7 +60,9 @@
   }
 
   // ---------- WebGL tissue ----------
-  var gl = glc.getContext('webgl', { antialias: false, premultipliedAlpha: false, alpha: false });
+  // inside the page-switch preview card the still image is enough: no WebGL work while the stack is moving
+  var root = document.documentElement, preview = root.classList.contains('pt-preview');
+  var gl = preview ? null : glc.getContext('webgl', { antialias: false, premultipliedAlpha: false, alpha: false });
   var dt = dtc ? dtc.getContext('2d') : null;
   // keep (or bring back) the still image whenever the live canvas can't be trusted
   function showStill() { shown = false; ready = false; hero.classList.remove('is-ready'); if (fallback) fallback.hidden = false; placeStill(); }
@@ -297,7 +299,9 @@
     var s = 1 + 0.011 * Math.sin(t * 6.28318 / 7.5);
     if (dt) drawData(now, t, s, B, insight);
   }
-  function loop(now) { draw(now); raf = visible ? requestAnimationFrame(loop) : null; }
+  // while a page switch is running the hero holds its frame (leaving) or its still (arriving), so the
+  // transition never competes with the canvas for frames
+  function loop(now) { if (!root.classList.contains('pt-active') && !root.classList.contains('pt-entering')) draw(now); raf = visible ? requestAnimationFrame(loop) : null; }
 
   if (!reduce) {
     raf = requestAnimationFrame(loop);
