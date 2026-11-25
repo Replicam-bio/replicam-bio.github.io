@@ -167,7 +167,28 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     el.className = 'pt-layer ' + cls; if (html) el.innerHTML = html;
     root.appendChild(el); return el;           // outside <body>, so body transforms don't move it
   }
-  function sheet(i) { return layer('pt-sheet', '<img alt="" src="' + snapSrc(i) + '">'); }
+  // A sheet = a snapshot of the page (taken without its header) + a real header, laid out by the same CSS
+  // as the live one, so the logo and buttons sit exactly where they do on the page at any window size.
+  function sheetNav(i) {
+    var n = nav.cloneNode(true);
+    n.className = 'nav'; n.removeAttribute('style'); n.setAttribute('aria-hidden', 'true'); n.inert = true;
+    n.querySelectorAll('.nav-bg, .nav-ghost').forEach(function (x) { x.remove(); });
+    n.querySelectorAll('[style]').forEach(function (x) { x.removeAttribute('style'); });
+    n.querySelectorAll('[id]').forEach(function (x) { x.removeAttribute('id'); });
+    n.querySelectorAll('[aria-current]').forEach(function (x) { x.removeAttribute('aria-current'); });
+    n.querySelectorAll('.is-current').forEach(function (x) { x.classList.remove('is-current'); });
+    n.querySelectorAll('a.nav-link').forEach(function (a) {
+      if (pageIndex(new URL(a.getAttribute('href'), location.href)) !== i) return;
+      a.setAttribute('aria-current', 'page');
+      if (a.parentNode.tagName === 'LI') a.parentNode.classList.add('is-current');
+    });
+    return n;
+  }
+  function sheet(i) {
+    var el = layer('pt-sheet', '<img class="pt-snap" alt="" src="' + snapSrc(i) + '">');
+    if (nav) el.appendChild(sheetNav(i));
+    return el;
+  }
   function pinNav() {                           // a transformed body re-anchors position:fixed children
     if (!nav) return;
     nav.style.position = 'absolute'; nav.style.top = (window.scrollY + 16) + 'px';
