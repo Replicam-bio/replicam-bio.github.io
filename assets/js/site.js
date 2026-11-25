@@ -145,7 +145,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
   var ORDER = ['index.html', 'products.html', 'technology.html', 'articles.html', 'contact.html'];
   var LAST = ORDER.length - 1;                   // the stack ends with Contact
   var busy = false;
-  // Which page switcher: 'stack' (the folder stack) or 'tiles' (the screen breaks into a grid of tiles that fall away).
+  // Which page switcher: 'stack' (the folder stack) or 'tiles' (the screen breaks into a grid of tiles that twist away to the sides).
   // Adding ?switcher=tiles or ?switcher=stack to any address overrides this, and is remembered in that browser.
   var MODE = 'tiles';
   try {
@@ -325,11 +325,12 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     a.onfinish = function () { cleanup(); };
   }
 
-  /* ---------- Tiles switcher: the screen breaks into a grid of tiles that fall away ----------
+  /* ---------- Tiles switcher: the screen breaks into a grid of tiles that twist away to the sides ----------
      Each tile is a copy of the page cut to one cell of the grid, so together they look exactly like the
-     screen; the page itself is hidden and the tiles fall (down going forward, up going back), starting
-     where you pressed and spreading outward. Behind them the next page waits at 92% size, and grows into
-     place once it has loaded. */
+     screen; the page itself is hidden and the tiles part down the middle: the left half flies out to the
+     left, the right half to the right, the middle first. Each tile turns like a card as it goes (outer edge
+     away going forward, toward you going back) and catches a brand-tinted gleam (Quark Blush on the left,
+     CryoGlow on the right). Behind them the next page waits at 92% size, and grows into place once it has loaded. */
   var CARD = 0.92;                               // size of the waiting page
 
   function buildGrid(snap) {
@@ -383,14 +384,8 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
   function leaveTiles(href, ev) {
     if (busy) return; busy = true;
     var to = pageIndex(new URL(href, location.href)), from = pageIndex(location);
-    var dir = from >= 0 && to >= 0 && to < from ? -1 : 1;            // back in the menu order: the tiles fall upward
+    var dir = from >= 0 && to >= 0 && to < from ? -1 : 1;            // back in the menu order: the tiles turn toward you
     var vw = window.innerWidth, vh = window.innerHeight, phone = vw < 700;
-    // where the page breaks: the press, or the link's centre for the keyboard
-    var px = vw / 2, py = 0;
-    if (ev && ev.detail) { px = ev.clientX; py = ev.clientY; }
-    else if (ev && ev.target && ev.target.closest) {
-      var lr = ev.target.closest('a').getBoundingClientRect(); px = lr.left + lr.width / 2; py = lr.top + lr.height / 2;
-    }
     var heroEl = document.querySelector('[data-organoid]');
     var snap = heroEl && heroEl.ptSnapshot ? heroEl.ptSnapshot() : null;
     root.classList.add('pt-active', 'pt-tiles');
@@ -399,29 +394,45 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     card.classList.add('pt-card'); card.style.zIndex = 2; card.style.transform = 'scale(' + CARD + ')';
     var cells = buildGrid(snap);
 
-    // timing: spreading out from the press, with a little randomness so it reads as a break, not a wipe
-    var diag = Math.sqrt(vw * vw + vh * vh), SPREAD = phone ? 380 : 460;
+    // timing: the middle parts first and the gap widens to the edges, with a little randomness
+    var mid = vw / 2, SPREAD = phone ? 320 : 420;
     function rnd() { return Math.random(); }
     cells.forEach(function (c) {
-      var cx = (c.box.left + c.box.right) / 2, cy = (c.box.top + c.box.bottom) / 2;
-      c.delay = Math.sqrt((cx - px) * (cx - px) + (cy - py) * (cy - py)) / diag * SPREAD + rnd() * 70;
+      var cx = (c.box.left + c.box.right) / 2;
+      c.side = cx < mid ? -1 : 1;
+      c.delay = Math.abs(cx - mid) / mid * SPREAD + rnd() * 70;
     });
     cells.slice().sort(function (a, b) { return a.delay - b.delay; }).forEach(function (c, n) { c.rank = n; });
 
     function start() {
       cells.forEach(function (c) { c.tile.style.opacity = ''; });
       body.style.visibility = 'hidden';
-      var runs = cells.map(function (c) {
-        var h = c.box.bottom - c.box.top;
-        var dy = dir > 0 ? vh - c.box.top + h * 0.3 + 30 + rnd() * 50 : -(c.box.bottom + h * 0.3 + 30 + rnd() * 50);
-        var rot = (rnd() < 0.5 ? -1 : 1) * (2 + rnd() * 9);
-        var dx = (rnd() - 0.5) * (phone ? 40 : 80);
-        var dur = (560 + rnd() * 180) * (phone ? 0.85 : 1);
-        // a falling tile passes in front of those still in place
+      var runs = [];
+      cells.forEach(function (c) {
+        var w = c.box.right - c.box.left, h = c.box.bottom - c.box.top, s = c.side;
+        // out past its own edge of the screen, drifting a little up or down
+        var dx = s < 0 ? -(c.box.right + w * 0.4 + 40 + rnd() * 60) : vw - c.box.left + w * 0.4 + 40 + rnd() * 60;
+        var dy = (rnd() - 0.5) * h * 0.5 + dir * h * 0.15;
+        // turn like a card: rotateY(+) sends the right edge away, so the outer edge goes away with s * angle
+        var ry = s * dir * (40 + rnd() * 25), rz = s * (1 + rnd() * 4) * (rnd() < 0.75 ? 1 : -1);
+        var dur = (680 + rnd() * 200) * (phone ? 0.85 : 1);
+        var easing = 'cubic-bezier(.45,0,.8,.4)';
+        // a leaving tile passes in front of those still in place
         setTimeout(function () { c.tile.style.zIndex = 1000 + c.rank; }, c.delay);
-        var a = c.tile.animate([{ transform: 'none' }, { transform: 'translate(' + dx + 'px,' + dy + 'px) rotate(' + rot + 'deg)' }],
-          { duration: dur, delay: c.delay, easing: 'cubic-bezier(.5,0,.9,.45)', fill: 'forwards' });
-        return a.finished;
+        runs.push(c.tile.animate([
+          { transform: 'perspective(1400px) translate3d(0,0,0) rotateY(0deg) rotateZ(0deg)' },
+          { transform: 'perspective(1400px) translate3d(' + dx + 'px,' + dy + 'px,0) rotateY(' + ry + 'deg) rotateZ(' + rz + 'deg)' }
+        ], { duration: dur, delay: c.delay, easing: easing, fill: 'forwards' }).finished);
+        // the gleam: a tinted band of light that sweeps outward across the tile, brightest as it turns most
+        var g = document.createElement('span');
+        g.className = 'pt-gleam ' + (s < 0 ? 'is-blush' : 'is-cryo');
+        Object.assign(g.style, { left: c.box.left + 'px', top: c.box.top + 'px', width: w + 'px', height: h + 'px' });
+        c.tile.appendChild(g);
+        g.animate([
+          { transform: 'translateX(' + (-s * w * 1.1) + 'px)', opacity: 0 },
+          { transform: 'translateX(' + (-s * w * 0.1) + 'px)', opacity: 0.65, offset: 0.55 },
+          { transform: 'translateX(' + (s * w * 1.1) + 'px)', opacity: 0.2 }
+        ], { duration: dur, delay: c.delay, easing: 'ease-in-out', fill: 'both' });
       });
       Promise.all(runs).then(function () {
         try { sessionStorage.setItem('pt-enter', JSON.stringify({ to: to, mode: 'tiles' })); } catch (e) {}
