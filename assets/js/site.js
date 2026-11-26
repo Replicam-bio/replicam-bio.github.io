@@ -224,7 +224,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
   }
 
   function leave(href, ev) {
-    if (MODE === 'tiles') { leaveTiles(href, ev); return; }
+    if (MODE === 'tiles') { leaveTiles(href); return; }
     if (busy) return; busy = true;
     var to = pageIndex(new URL(href, location.href)), from = pageIndex(location);
     if (to < 0) to = 0;
@@ -327,112 +327,147 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
 
   /* ---------- Tiles switcher: the screen breaks into a grid of tiles that twist away to the sides ----------
      Each tile is a copy of the page cut to one cell of the grid, so together they look exactly like the
-     screen; the page itself is hidden and the tiles part down the middle: the left half flies out to the
-     left, the right half to the right, the middle first. Each tile turns like a card as it goes (outer edge
-     away going forward, toward you going back) and catches a brand-tinted gleam (Quark Blush on the left,
-     CryoGlow on the right). Behind them the next page waits at 92% size, and grows into place once it has loaded. */
+     screen; the tiles part down the middle: the left half flies out to the left, the right half to the
+     right, the middle first. Each tile turns like a card as it goes (outer edge away going forward, toward
+     you going back), and some catch a brand-tinted gleam (Quark Blush on the left, CryoGlow on the right).
+     Behind them the next page waits at 92% size, and grows into place once it has loaded.
+     Speed: the tiles are built ahead while the pointer rests on a link (for a tap, as they go), and they
+     take over the screen a few per frame, middle first, the real page still showing where a tile hasn't
+     yet: so a click starts moving at once, and no frame has the whole grid to draw. */
   var CARD = 0.92;                               // size of the waiting page
+  var prep = null;                               // tiles built ahead for the screen as it is now
 
-  function buildGrid(snap) {
-    var vw = window.innerWidth, vh = window.innerHeight, y = window.scrollY, phone = vw < 700;
-    var cols = phone ? 6 : 12, rows = phone ? 10 : 8;
-    var pageBg = getComputedStyle(body).backgroundColor, pageW = document.documentElement.clientWidth;
+  function gridSpec() {
+    var vw = window.innerWidth, vh = window.innerHeight, phone = vw < 700;
+    var cols = phone ? 6 : 12, rows = phone ? 10 : 8, xs = [], ys = [], i, j;
     // whole-pixel cell edges, so neighbouring tiles meet without a seam
-    var xs = [], ys = [], i, j;
     for (i = 0; i <= cols; i++) xs.push(Math.round(vw * i / cols));
     for (j = 0; j <= rows; j++) ys.push(Math.round(vh * j / rows));
-    // each copy only lays out and paints the sections its row actually shows
-    var mainEl = body.querySelector('main');
-    var sections = mainEl ? Array.prototype.map.call(mainEl.children, function (c) { var r = c.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: r.height }; }) : [];
-    // the header is fixed to the screen: in a copy it is pinned where it is on screen now
-    var navTop = nav ? nav.getBoundingClientRect().top + y : 0;
-    var heroEl = snap && document.querySelector('[data-organoid]'), hr = heroEl && heroEl.getBoundingClientRect();
-    var cells = [];
+    var mainEl = body.querySelector('main'), cells = [];
     for (j = 0; j < rows; j++) for (i = 0; i < cols; i++) {
-      var cell = { left: xs[i], right: xs[i + 1], top: ys[j], bottom: ys[j + 1] };
-      var cw = cell.right - cell.left, ch = cell.bottom - cell.top;
-      var page = document.createElement('div');
-      page.className = 'pt-page';
-      Object.assign(page.style, { left: -cell.left + 'px', top: -(y + cell.top) + 'px', width: pageW + 'px', background: pageBg });
-      Array.prototype.forEach.call(body.children, function (c) { if (!c.classList.contains('pt-layer')) page.appendChild(c.cloneNode(true)); });
-      var m = page.querySelector('main');
-      if (m) sections.forEach(function (s, n) {
-        if ((s.bottom < cell.top - 2 || s.top > cell.bottom + 2) && m.children[n]) { m.children[n].style.height = s.h + 'px'; m.children[n].style.contentVisibility = 'hidden'; }
-      });
-      var nv = page.querySelector('.nav');
-      if (nv) Object.assign(nv.style, { position: 'absolute', top: navTop + 'px' });
-      // nothing in a copy needs to run or stay hidden: drop scripts and hidden content (less to copy and lay out)
-      page.querySelectorAll('script, [hidden], .team-bios').forEach(function (n) { n.remove(); });
-      page.querySelectorAll('img').forEach(function (n) { n.decoding = 'sync'; n.loading = 'eager'; });
-      page.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
-      page.querySelectorAll('.org-data').forEach(function (n) { n.style.display = 'none'; });   // already in the hero's snapshot
-      // the living hero: only this cell's piece of its current frame
-      var gl = page.querySelector('.org-gl');
-      if (gl && snap) {
-        var l = Math.max(cell.left, hr.left), t = Math.max(cell.top, hr.top), r = Math.min(cell.right, hr.right), b = Math.min(cell.bottom, hr.bottom);
-        if (r > l && b > t) {
-          var k = snap.canvas.width / hr.width, c = document.createElement('canvas');
-          c.width = Math.max(1, Math.round((r - l) * k)); c.height = Math.max(1, Math.round((b - t) * k));
-          c.getContext('2d').drawImage(snap.canvas, (l - hr.left) * k, (t - hr.top) * k, c.width, c.height, 0, 0, c.width, c.height);
-          c.className = 'org-gl';
-          Object.assign(c.style, { left: (l - hr.left) + 'px', top: (t - hr.top) + 'px', width: (r - l) + 'px', height: (b - t) + 'px', right: 'auto', bottom: 'auto' });
-          gl.replaceWith(c);
-        } else gl.style.display = 'none';
-      }
-      // a tile is only as big as its cell (small layers), with the copy shifted so its piece shows
-      var tile = layer('pt-tile');
-      Object.assign(tile.style, { left: cell.left + 'px', top: cell.top + 'px', width: cw + 'px', height: ch + 'px', overflow: 'hidden',
-        transformOrigin: '50% 50%', opacity: '0', zIndex: 100 });
-      tile.appendChild(page);
-      cells.push({ tile: tile, box: cell });
+      var cx = (xs[i] + xs[i + 1]) / 2;
+      cells.push({ i: i, j: j, box: { left: xs[i], right: xs[i + 1], top: ys[j], bottom: ys[j + 1] },
+        side: cx < vw / 2 ? -1 : 1, mid: Math.abs(cx - vw / 2) / (vw / 2) });
     }
-    return cells;
+    cells.sort(function (a, b) { return a.mid - b.mid; });          // middle first: the order they are built and leave
+    return {
+      vw: vw, vh: vh, y: window.scrollY, phone: phone, pageW: document.documentElement.clientWidth, cells: cells,
+      pageBg: getComputedStyle(body).backgroundColor,
+      navTop: nav ? nav.getBoundingClientRect().top + window.scrollY : 0,   // the fixed header, pinned in the copies
+      sections: mainEl ? Array.prototype.map.call(mainEl.children, function (c) { var r = c.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: r.height }; }) : []
+    };
   }
 
+  // one tile: a copy of the page, shifted so this cell's piece shows, in a layer the size of the cell
+  function buildCell(spec, cell) {
+    var box = cell.box, page = document.createElement('div');
+    page.className = 'pt-page';
+    Object.assign(page.style, { left: -box.left + 'px', top: -(spec.y + box.top) + 'px', width: spec.pageW + 'px', background: spec.pageBg });
+    Array.prototype.forEach.call(body.children, function (c) { if (!c.classList.contains('pt-layer')) page.appendChild(c.cloneNode(true)); });
+    var m = page.querySelector('main');
+    if (m) spec.sections.forEach(function (s, n) {   // only the sections this row shows are laid out and painted
+      if ((s.bottom < box.top - 2 || s.top > box.bottom + 2) && m.children[n]) { m.children[n].style.height = s.h + 'px'; m.children[n].style.contentVisibility = 'hidden'; }
+    });
+    var nv = page.querySelector('.nav');
+    if (nv) Object.assign(nv.style, { position: 'absolute', top: spec.navTop + 'px' });
+    // nothing in a copy needs to run or stay hidden: drop scripts and hidden content (less to copy and lay out)
+    page.querySelectorAll('script, [hidden], .team-bios').forEach(function (n) { n.remove(); });
+    page.querySelectorAll('img').forEach(function (n) { n.decoding = 'sync'; n.loading = 'eager'; });
+    page.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
+    page.querySelectorAll('.org-data').forEach(function (n) { n.style.display = 'none'; });   // in the hero's snapshot
+    cell.gl = page.querySelector('.org-gl');     // filled with this cell's piece of the hero at the moment of the click
+    if (cell.gl) cell.gl.style.visibility = 'hidden';
+    var tile = layer('pt-tile');
+    Object.assign(tile.style, { left: box.left + 'px', top: box.top + 'px', width: (box.right - box.left) + 'px', height: (box.bottom - box.top) + 'px',
+      overflow: 'hidden', transformOrigin: '50% 50%', visibility: 'hidden', zIndex: 100 });
+    tile.appendChild(page);
+    cell.tile = tile;
+  }
 
-  function leaveTiles(href, ev) {
+  function paintHero(cell, snap, hr) {
+    var gl = cell.gl; if (!gl) return;
+    if (!snap) { gl.style.visibility = ''; return; }      // no live hero: the copy shows the still image as it is
+    var b = cell.box, l = Math.max(b.left, hr.left), t = Math.max(b.top, hr.top), r = Math.min(b.right, hr.right), bt = Math.min(b.bottom, hr.bottom);
+    if (r <= l || bt <= t) { gl.style.display = 'none'; return; }
+    var k = snap.canvas.width / hr.width, c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round((r - l) * k)); c.height = Math.max(1, Math.round((bt - t) * k));
+    c.getContext('2d').drawImage(snap.canvas, (l - hr.left) * k, (t - hr.top) * k, c.width, c.height, 0, 0, c.width, c.height);
+    c.className = 'org-gl';
+    Object.assign(c.style, { left: (l - hr.left) + 'px', top: (t - hr.top) + 'px', width: (r - l) + 'px', height: (bt - t) + 'px', right: 'auto', bottom: 'auto' });
+    gl.replaceWith(c); cell.gl = c;
+  }
+
+  // Build the tiles ahead, a few at a time between frames, while the pointer rests on a link.
+  // Anything that changes the screen (scrolling, resizing, any change to the page) throws them away.
+  function discardPrep() {
+    if (!prep) return;
+    prep.dead = true; prep.mo.disconnect(); clearTimeout(prep.timer);
+    prep.spec.cells.forEach(function (c) { if (c.tile) c.tile.remove(); });
+    prep = null;
+  }
+  function prepareTiles() {
+    if (MODE !== 'tiles' || busy || prep) return;
+    var p = { spec: gridSpec(), built: 0, dead: false };
+    p.mo = new MutationObserver(function () { if (!busy) discardPrep(); });
+    p.mo.observe(body, { subtree: true, childList: true, attributes: true, characterData: true });
+    prep = p;
+    (function chunk() {
+      if (p.dead || busy) return;
+      var t = performance.now();
+      while (p.built < p.spec.cells.length && performance.now() - t < 6) buildCell(p.spec, p.spec.cells[p.built++]);
+      if (p.built < p.spec.cells.length) p.timer = setTimeout(chunk, 16);
+    })();
+  }
+  window.addEventListener('scroll', function () { if (prep && !busy) discardPrep(); }, { passive: true });
+  window.addEventListener('resize', function () { if (prep && !busy) discardPrep(); });
+
+  function leaveTiles(href) {
     if (busy) return; busy = true;
     var to = pageIndex(new URL(href, location.href)), from = pageIndex(location);
     var dir = from >= 0 && to >= 0 && to < from ? -1 : 1;            // back in the menu order: the tiles turn toward you
-    var vw = window.innerWidth, vh = window.innerHeight, phone = vw < 700;
     var heroEl = document.querySelector('[data-organoid]');
-    var snap = heroEl && heroEl.ptSnapshot ? heroEl.ptSnapshot() : null;
+    var snap = heroEl && heroEl.ptSnapshot ? heroEl.ptSnapshot() : null, hr = heroEl && heroEl.getBoundingClientRect();
+    var p = prep;
+    if (p) { p.mo.disconnect(); clearTimeout(p.timer); prep = null; }
     root.classList.add('pt-active', 'pt-tiles');
+    // the tiles built ahead fit only the screen as it still is (hiding the scrollbar can change the width)
+    if (p && (p.spec.y !== window.scrollY || p.spec.vw !== window.innerWidth || p.spec.vh !== window.innerHeight || p.spec.pageW !== document.documentElement.clientWidth)) {
+      prep = p; p.dead = false; discardPrep(); p = null;
+    }
+    var spec = p ? p.spec : gridSpec(), cells = spec.cells, vw = spec.vw, phone = spec.phone;
     layer('pt-backdrop');
     var card = makeNext(href); card.style.visibility = ''; pending = null;
     card.classList.add('pt-card'); card.style.zIndex = 2; card.style.transform = 'scale(' + CARD + ')';
-    var cells = buildGrid(snap);
 
     // timing: the middle parts first and the gap widens to the edges, with a little randomness
-    var mid = vw / 2, SPREAD = phone ? 190 : 250;
+    var SPREAD = phone ? 190 : 250;
     function rnd() { return Math.random(); }
     cells.forEach(function (c) {
-      var cx = (c.box.left + c.box.right) / 2;
-      c.side = cx < mid ? -1 : 1;
-      c.delay = Math.abs(cx - mid) / mid * SPREAD + rnd() * 70;
+      c.delay = c.mid * SPREAD + rnd() * 70;
+      c.dur = (420 + rnd() * 140) * (phone ? 0.85 : 1);
     });
-    cells.slice().sort(function (a, b) { return a.delay - b.delay; }).forEach(function (c, n) { c.rank = n; });
+    var t0 = performance.now(), launched = 0, rank = 0, ends = [];
 
-    function start() {
-      cells.forEach(function (c) { c.tile.style.opacity = ''; });
-      body.style.visibility = 'hidden';
-      var runs = [];
-      cells.forEach(function (c) {
-        var w = c.box.right - c.box.left, h = c.box.bottom - c.box.top, s = c.side;
-        // out past its own edge of the screen, drifting a little up or down
-        var dx = s < 0 ? -(c.box.right + w * 0.4 + 40 + rnd() * 60) : vw - c.box.left + w * 0.4 + 40 + rnd() * 60;
-        var dy = (rnd() - 0.5) * h * 0.5 + dir * h * 0.15;
-        // turn like a card: rotateY(+) sends the right edge away, so the outer edge goes away with s * angle
-        var ry = s * dir * (40 + rnd() * 25), rz = s * (1 + rnd() * 4) * (rnd() < 0.75 ? 1 : -1);
-        var dur = (420 + rnd() * 140) * (phone ? 0.85 : 1);
-        var easing = 'cubic-bezier(.45,0,.8,.4)';
-        // a leaving tile passes in front of those still in place
-        setTimeout(function () { c.tile.style.zIndex = 1000 + c.rank; }, c.delay);
-        runs.push(c.tile.animate([
-          { transform: 'perspective(1400px) translate3d(0,0,0) rotateY(0deg) rotateZ(0deg)' },
-          { transform: 'perspective(1400px) translate3d(' + dx + 'px,' + dy + 'px,0) rotateY(' + ry + 'deg) rotateZ(' + rz + 'deg)' }
-        ], { duration: dur, delay: c.delay, easing: easing, fill: 'forwards' }).finished);
-        // the gleam: a tinted band of light that sweeps outward across the tile, brightest as it turns most
+    function launch(c) {
+      var w = c.box.right - c.box.left, h = c.box.bottom - c.box.top, s = c.side;
+      paintHero(c, snap, hr);
+      c.tile.style.visibility = '';
+      var wait = Math.max(0, c.delay - (performance.now() - t0)), z = 1000 + rank++;
+      // out past its own edge of the screen, drifting a little up or down
+      var dx = s < 0 ? -(c.box.right + w * 0.4 + 40 + rnd() * 60) : vw - c.box.left + w * 0.4 + 40 + rnd() * 60;
+      var dy = (rnd() - 0.5) * h * 0.5 + dir * h * 0.15;
+      // turn like a card: rotateY(+) sends the right edge away, so the outer edge goes away with s * angle
+      var ry = s * dir * (40 + rnd() * 25), rz = s * (1 + rnd() * 4) * (rnd() < 0.75 ? 1 : -1);
+      // a leaving tile passes in front of those still in place
+      setTimeout(function () { c.tile.style.zIndex = z; }, wait);
+      c.tile.animate([
+        { transform: 'perspective(1400px) translate3d(0,0,0) rotateY(0deg) rotateZ(0deg)' },
+        { transform: 'perspective(1400px) translate3d(' + dx + 'px,' + dy + 'px,0) rotateY(' + ry + 'deg) rotateZ(' + rz + 'deg)' }
+      ], { duration: c.dur, delay: wait, easing: 'cubic-bezier(.45,0,.8,.4)', fill: 'forwards' });
+      ends.push(performance.now() + wait + c.dur);
+      // the gleam, on one tile in four in a staggered pattern: a tinted band of light that sweeps outward
+      // across the tile, brightest as it turns most
+      if ((c.i + 2 * c.j) % 4 === 0) {
         var g = document.createElement('span');
         g.className = 'pt-gleam ' + (s < 0 ? 'is-blush' : 'is-cryo');
         Object.assign(g.style, { left: 0, top: 0, width: w + 'px', height: h + 'px' });
@@ -441,20 +476,39 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
           { transform: 'translateX(' + (-s * w * 1.1) + 'px)', opacity: 0 },
           { transform: 'translateX(' + (-s * w * 0.1) + 'px)', opacity: 0.65, offset: 0.55 },
           { transform: 'translateX(' + (s * w * 1.1) + 'px)', opacity: 0.2 }
-        ], { duration: dur, delay: c.delay, easing: 'ease-in-out', fill: 'both' });
-      });
-      Promise.all(runs).then(function () {
+        ], { duration: c.dur, delay: wait, easing: 'ease-in-out', fill: 'both' });
+      }
+      launched++;
+    }
+    // until every tile is ready, the page itself stays visible except where a tile already covers it
+    function holes() {
+      if (launched >= cells.length) { body.style.clipPath = ''; body.style.visibility = 'hidden'; return; }
+      var d = 'M0 0H' + spec.pageW + 'V' + body.scrollHeight + 'H0Z';
+      for (var n = 0; n < launched; n++) { var b = cells[n].box; d += 'M' + b.left + ' ' + (b.top + spec.y) + 'H' + b.right + 'V' + (b.bottom + spec.y) + 'H' + b.left + 'Z'; }
+      body.style.clipPath = 'path(evenodd, "' + d + '")';
+    }
+    function done() {
+      // leave while the last tiles finish going off screen: the next page starts loading a moment sooner
+      var wait = Math.max(0, Math.max.apply(null, ends) - performance.now() - 120);
+      setTimeout(function () {
         try { sessionStorage.setItem('pt-enter', JSON.stringify({ to: to, mode: 'tiles' })); } catch (e) {}
         window.location.href = href;
         setTimeout(function () { try { sessionStorage.removeItem('pt-enter'); } catch (e) {} cleanup(); }, 5000);
-      }, function () {});
+      }, wait);
     }
-    // the copies show their pictures from the first frame: wait for the (cached) images to be decoded
-    var imgs = [];
-    cells.forEach(function (c) { c.tile.querySelectorAll('img').forEach(function (im) { if (im.decode) imgs.push(im.decode().catch(function () {})); }); });
-    var go = false;
-    function once() { if (go) return; go = true; requestAnimationFrame(start); }
-    Promise.all(imgs).then(once); setTimeout(once, 80);
+    // a few tiles go each frame, middle first (each frame then only has a few new tiles to draw);
+    // tiles not built ahead are built as they go
+    var BATCH = phone ? 12 : 16;
+    (function step() {
+      if (!busy) return;
+      for (var n = 0; n < BATCH && launched < cells.length; n++) {
+        var c = cells[launched];
+        if (!c.tile) buildCell(spec, c);
+        launch(c);
+      }
+      holes();
+      if (launched < cells.length) requestAnimationFrame(step); else done();
+    })();
   }
 
   function enterTiles() {
@@ -480,7 +534,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     var a = body.animate([
       { transform: 'scale(' + CARD + ')', clipPath: 'inset(' + y + 'px 0 ' + rest + 'px 0 round 16px)' },
       { transform: 'scale(1)', clipPath: 'inset(' + y + 'px 0 ' + rest + 'px 0 round 0px)' }
-    ], { duration: 560, easing: 'cubic-bezier(.65,0,.35,1)', fill: 'both' });
+    ], { duration: 400, easing: 'cubic-bezier(.65,0,.35,1)', fill: 'both' });
     a.onfinish = function () { cleanup(); };
   }
 
@@ -490,6 +544,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     if (nav) { nav.style.position = ''; nav.style.top = ''; }
     document.querySelectorAll('.pt-layer').forEach(function (el) { el.remove(); });
     root.classList.remove('pt-active', 'pt-entering', 'pt-tiles');
+    if (prep) { prep.dead = true; prep.mo.disconnect(); clearTimeout(prep.timer); prep = null; }
     busy = false; pending = null;
   }
 
@@ -526,12 +581,12 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
       clearTimeout(hoverT);
       if (busy || e.pointerType === 'touch') return;
       var href = pageLink(e.target);
-      if (href) hoverT = setTimeout(function () { if (!busy) makeNext(href); }, 120);
+      if (href) hoverT = setTimeout(function () { if (!busy) { makeNext(href); prepareTiles(); } }, 120);
     }, { passive: true });
     ['focusin', 'pointerdown'].forEach(function (type) {      // pressing starts the preview at once, ahead of the click
       document.addEventListener(type, function (e) {
         if (busy || e.pointerType === 'touch') return;      // a touch may be the start of a scroll
-        var href = pageLink(e.target); if (href) makeNext(href);
+        var href = pageLink(e.target); if (href) { makeNext(href); prepareTiles(); }
       }, { passive: true });
     });
   }
