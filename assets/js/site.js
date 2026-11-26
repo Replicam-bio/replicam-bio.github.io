@@ -404,7 +404,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     var cells = buildGrid(snap);
 
     // timing: the middle parts first and the gap widens to the edges, with a little randomness
-    var mid = vw / 2, SPREAD = phone ? 320 : 420;
+    var mid = vw / 2, SPREAD = phone ? 190 : 250;
     function rnd() { return Math.random(); }
     cells.forEach(function (c) {
       var cx = (c.box.left + c.box.right) / 2;
@@ -424,7 +424,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
         var dy = (rnd() - 0.5) * h * 0.5 + dir * h * 0.15;
         // turn like a card: rotateY(+) sends the right edge away, so the outer edge goes away with s * angle
         var ry = s * dir * (40 + rnd() * 25), rz = s * (1 + rnd() * 4) * (rnd() < 0.75 ? 1 : -1);
-        var dur = (680 + rnd() * 200) * (phone ? 0.85 : 1);
+        var dur = (420 + rnd() * 140) * (phone ? 0.85 : 1);
         var easing = 'cubic-bezier(.45,0,.8,.4)';
         // a leaving tile passes in front of those still in place
         setTimeout(function () { c.tile.style.zIndex = 1000 + c.rank; }, c.delay);
@@ -454,7 +454,7 @@ if (/[?&]pt-preview\b/.test(location.search)) document.documentElement.classList
     cells.forEach(function (c) { c.tile.querySelectorAll('img').forEach(function (im) { if (im.decode) imgs.push(im.decode().catch(function () {})); }); });
     var go = false;
     function once() { if (go) return; go = true; requestAnimationFrame(start); }
-    Promise.all(imgs).then(once); setTimeout(once, 200);
+    Promise.all(imgs).then(once); setTimeout(once, 80);
   }
 
   function enterTiles() {
